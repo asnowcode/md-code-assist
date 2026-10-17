@@ -15,6 +15,7 @@ const vscode = {
       task({ report: jest.fn() }),
     ),
     activeTextEditor: undefined,
+    tabGroups: { all: [] as unknown[] },
   },
   workspace: {
     getConfiguration: jest.fn(() => ({
@@ -98,6 +99,9 @@ const vscode = {
     cancel: jest.fn(),
     dispose: jest.fn(),
   })),
+  TabInputCustom: class {
+    constructor(public uri: unknown, public viewType: string) {}
+  },
   window_createTextEditorDecorationType: jest.fn(() => ({ dispose: jest.fn() })),
 };
 

@@ -23,7 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- **MEO Enhanced save persistence** — apply `onSave` code-block formatting before the disk write so a formatted document does not immediately become unsaved again.
+- **Save persistence** — apply `onSave` code-block formatting before the disk write in standard Markdown editors. Skip automatic formatting in MEO Enhanced 0.3.33 so its save succeeds without a conflicting revision.
 
 - **Format on save with custom Markdown editors** — format the saved document rather than the active editor, and silently skip documents without eligible code blocks.
 

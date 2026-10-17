@@ -2,7 +2,7 @@
 
 ## Formatting pipeline
 
-The `onWillSaveTextDocument` listener formats the document being saved and returns only changed code-block `TextEdit`s through `waitUntil`, so they are written in the same save transaction. The `onDidSaveTextDocument` listener handles save-triggered diagnostics; manual format commands use the active text editor and `WorkspaceEdit`. The shared document formatter skips disabled languages and fences without a registered formatter before showing progress. Custom editors are supported when they expose standard text-document save events.
+The `onWillSaveTextDocument` listener formats the document being saved and returns only changed code-block `TextEdit`s through `waitUntil`, so they are written in the same save transaction. The `onDidSaveTextDocument` listener handles save-triggered diagnostics; manual format commands use the active text editor and `WorkspaceEdit`. The shared document formatter skips disabled languages and fences without a registered formatter before showing progress. The listener skips documents open in MEO Enhanced custom editor tabs because MEO 0.3.33 rejects save-participant changes to its requested revision.
 
 ```
 Markdown file

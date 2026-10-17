@@ -125,6 +125,15 @@ export function activate(context: vscode.ExtensionContext): void {
     if (config.get<string>('format.triggerMode') !== 'onSave') {
       return;
     }
+    // MEO 0.3.33 rejects saves when another extension changes the requested revision.
+    const isMeoDocument = vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some((tab) => tab.input instanceof vscode.TabInputCustom
+        && tab.input.viewType === 'meoEnhanced.editor'
+        && tab.input.uri.toString() === event.document.uri.toString()),
+    );
+    if (isMeoDocument) {
+      return;
+    }
     event.waitUntil(
       (async () => {
         const tokenSource = new vscode.CancellationTokenSource();

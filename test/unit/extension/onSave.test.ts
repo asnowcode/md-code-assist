@@ -30,6 +30,9 @@ let didSave: (document: vscode.TextDocument) => void;
 let willSave: ((event: vscode.TextDocumentWillSaveEvent) => void) | undefined;
 let subscriptions: vscode.Disposable[];
 const COMMANDS = new Map<string, (...args: unknown[]) => unknown>();
+const mockTabGroups = vscode.window.tabGroups as unknown as {
+  all: Array<{ tabs: Array<{ input: unknown }> }>;
+};
 
 function document(text: string, name = 'saved.md', languageId = 'markdown'): vscode.TextDocument {
   return {
@@ -61,6 +64,7 @@ async function save(
 beforeEach(() => {
   subscriptions = [];
   willSave = undefined;
+  mockTabGroups.all.length = 0;
   COMMANDS.clear();
   jest.mocked(vscode.commands.registerCommand).mockImplementation((id, callback) => {
     COMMANDS.set(id, callback);
@@ -142,6 +146,29 @@ it('formats a Markdown document saved from the normal text editor', async () => 
 
   expect(edits).toEqual([expect.objectContaining({ newText: 'const answer = 42;' })]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
+});
+
+it('lets MEO save the requested revision without a conflicting format edit', async () => {
+  const saved = document('```js\nconst answer=42\n```');
+  mockTabGroups.all.push({
+    tabs: [{ input: new vscode.TabInputCustom(saved.uri, 'meoEnhanced.editor') }],
+  });
+
+  const edits = await save(saved);
+
+  expect(edits).toEqual([]);
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
+  expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+});
+
+it('formats another Markdown document while a MEO tab is open', async () => {
+  mockTabGroups.all.push({
+    tabs: [{ input: new vscode.TabInputCustom(vscode.Uri.file('meo.md'), 'meoEnhanced.editor') }],
+  });
+
+  const edits = await save(document('```js\nconst answer=42\n```', 'other.md'));
+
+  expect(edits).toEqual([expect.objectContaining({ newText: 'const answer = 42;' })]);
 });
 
 it('leaves the saved Markdown persisted and clean after formatting a code block', async () => {
