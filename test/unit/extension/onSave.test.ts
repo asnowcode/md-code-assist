@@ -28,7 +28,7 @@ jest.mock('../../../src/diagnostics/shellCheckExtensionDiagnostics', () => ({
 
 let save: (document: vscode.TextDocument) => void;
 let subscriptions: vscode.Disposable[];
-const commands = new Map<string, (...args: unknown[]) => unknown>();
+const COMMANDS = new Map<string, (...args: unknown[]) => unknown>();
 
 function document(text: string, name = 'saved.md', languageId = 'markdown'): vscode.TextDocument {
   return {
@@ -42,13 +42,13 @@ function document(text: string, name = 'saved.md', languageId = 'markdown'): vsc
 
 beforeEach(() => {
   subscriptions = [];
-  commands.clear();
+  COMMANDS.clear();
   jest.mocked(vscode.commands.registerCommand).mockImplementation((id, callback) => {
-    commands.set(id, callback);
+    COMMANDS.set(id, callback);
     return { dispose: jest.fn() };
   });
   jest.mocked(vscode.commands.executeCommand).mockImplementation(async (id: string) => {
-    commands.get(id)?.();
+    COMMANDS.get(id)?.();
     return undefined as never;
   });
   jest.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -81,6 +81,15 @@ afterEach(() => {
 
 it('silently skips a saved Markdown document containing only a text block', async () => {
   save(document('# Notes\n\n```text\nplain text\n```\n'));
+  await new Promise(setImmediate);
+
+  expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
+});
+
+it('silently skips an unlabelled code block', async () => {
+  save(document('```\nplain text\n```'));
   await new Promise(setImmediate);
 
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
@@ -136,8 +145,27 @@ it('reports a formatter failure instead of silently treating it as no work', asy
 
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-    expect.stringContaining('1 block(s) skipped'),
+    expect.stringContaining('1 code block(s) could not be formatted'),
   );
+});
+
+it('reports a failed block when another block is already formatted', async () => {
+  formatterRegistry.register({
+    supportedLanguages: ['javascript'],
+    isAvailable: async () => true,
+    format: async (code) =>
+      code.includes('invalid')
+        ? { success: false, error: 'Invalid JavaScript' }
+        : { success: true, formatted: code },
+  });
+  save(document('```js\nconst answer = 42;\n```\n\n```js\ninvalid\n```'));
+  await new Promise(setImmediate);
+
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
+  expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+    expect.stringContaining('1 code block(s) could not be formatted'),
+  );
+  expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
 });
 
 it('reports a failed block even when another block was formatted', async () => {
@@ -248,7 +276,7 @@ it('keeps save diagnostics aimed at the saved document', async () => {
 });
 
 it('keeps the manual command warning when no Markdown editor is active', async () => {
-  await commands.get('mdCodeAssist.formatAllBlocks')?.();
+  await COMMANDS.get('mdCodeAssist.formatAllBlocks')?.();
 
   expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
     'Markdown Code Assistant: Open a Markdown file to format.',

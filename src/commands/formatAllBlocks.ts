@@ -127,7 +127,12 @@ export async function formatAllBlocksCommand(
     return;
   }
 
-  if (savedDocument && summary.edits.length === 0 && summary.failedCount === 0) {
+  if (savedDocument && summary.edits.length === 0) {
+    if (summary.failedCount > 0) {
+      void vscode.window.showWarningMessage(
+        `Markdown Code Assistant: ${summary.failedCount} code block(s) could not be formatted. Check the Output panel for details.`,
+      );
+    }
     return;
   }
 
