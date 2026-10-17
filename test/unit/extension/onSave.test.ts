@@ -149,14 +149,22 @@ it('formats a Markdown document saved from the normal text editor', async () => 
 });
 
 it('lets MEO save the requested revision without a conflicting format edit', async () => {
-  const saved = document('```js\nconst answer=42\n```');
+  const requested = '```js\nconst answer=42\n```';
+  const saved = document(requested);
+  let disk = '';
+  let isDirty = true;
   mockTabGroups.all.push({
     tabs: [{ input: new vscode.TabInputCustom(saved.uri, 'meoEnhanced.editor') }],
   });
 
-  const edits = await save(saved);
+  const edits = await save(saved, (changes) => {
+    disk = changes.length === 0 ? requested : changes[0].newText;
+    isDirty = false;
+  });
 
   expect(edits).toEqual([]);
+  expect(disk).toBe(requested);
+  expect(isDirty).toBe(false);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
 });
