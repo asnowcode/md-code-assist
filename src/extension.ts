@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { registerCommands } from './commands/commandRegistry';
-import { formatAllBlocksCommand } from './commands/formatAllBlocks';
+import { formatDocument } from './commands/formatAllBlocks';
 import { DiagnosticProvider } from './diagnostics/diagnosticProvider';
 import { DecorationManager } from './decorations/decorationManager';
 import { Logger } from './utils/logger';
@@ -90,7 +90,6 @@ export function activate(context: vscode.ExtensionContext): void {
         _options: vscode.FormattingOptions,
         token: vscode.CancellationToken,
       ): Promise<vscode.TextEdit[]> {
-        const { formatDocument } = await import('./commands/formatAllBlocks');
         const summary = await formatDocument(document, token);
         return summary.edits;
       },
@@ -117,15 +116,49 @@ export function activate(context: vscode.ExtensionContext): void {
     }, 500);
   });
 
-  // On-save listener — fires format and/or diagnostics when their triggerMode is 'onSave'
+  // Save-time edits must be returned before VS Code writes the document.
+  const onWillSaveListener = vscode.workspace.onWillSaveTextDocument((event) => {
+    if (event.document.languageId !== 'markdown') {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('mdCodeAssist');
+    if (config.get<string>('format.triggerMode') !== 'onSave') {
+      return;
+    }
+    event.waitUntil(
+      (async () => {
+        const tokenSource = new vscode.CancellationTokenSource();
+        const version = event.document.version;
+        try {
+          const summary = await formatDocument(event.document, tokenSource.token);
+          if (event.document.version !== version) {
+            return [];
+          }
+          if (summary.failedCount > 0) {
+            void vscode.window.showWarningMessage(
+              `Markdown Code Assistant: ${summary.failedCount} code block(s) could not be formatted. Check the Output panel for details.`,
+            );
+          }
+          return summary.edits;
+        } catch (error) {
+          Logger.error('Could not format code blocks before saving.', error);
+          void vscode.window.showWarningMessage(
+            'Markdown Code Assistant: Code blocks could not be formatted. The document will still be saved.',
+          );
+          return [];
+        } finally {
+          tokenSource.dispose();
+        }
+      })(),
+    );
+  });
+
+  // Diagnostics run after the document has been saved.
   const onSaveListener = vscode.workspace.onDidSaveTextDocument((document) => {
     if (document.languageId !== 'markdown') {
       return;
     }
     const config = vscode.workspace.getConfiguration('mdCodeAssist');
-    if (config.get<string>('format.triggerMode') === 'onSave') {
-      void formatAllBlocksCommand(statusBar, document);
-    }
     if (config.get<string>('diagnostics.triggerMode') === 'onSave') {
       void diagnosticProvider?.refresh(document);
     }
@@ -141,6 +174,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     formattingProvider,
     onChangeListener,
+    onWillSaveListener,
     onSaveListener,
     onCloseListener,
     onEditorChangeListener,

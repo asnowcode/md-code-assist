@@ -21,6 +21,7 @@ const vscode = {
       get: jest.fn(),
     })),
     onDidChangeTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+    onWillSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidCloseTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     registerTextDocumentContentProvider: jest.fn(() => ({ dispose: jest.fn() })),

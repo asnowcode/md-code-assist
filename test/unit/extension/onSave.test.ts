@@ -26,7 +26,8 @@ jest.mock('../../../src/diagnostics/shellCheckExtensionDiagnostics', () => ({
   ensureShellCheckExtension: jest.fn(async () => true),
 }));
 
-let save: (document: vscode.TextDocument) => void;
+let didSave: (document: vscode.TextDocument) => void;
+let willSave: ((event: vscode.TextDocumentWillSaveEvent) => void) | undefined;
 let subscriptions: vscode.Disposable[];
 const COMMANDS = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -40,8 +41,26 @@ function document(text: string, name = 'saved.md', languageId = 'markdown'): vsc
   } as vscode.TextDocument;
 }
 
+async function save(
+  saved: vscode.TextDocument,
+  applyBeforeSave?: (edits: readonly vscode.TextEdit[]) => void,
+): Promise<readonly vscode.TextEdit[]> {
+  let pendingEdits: Promise<readonly vscode.TextEdit[]> = Promise.resolve([]);
+  willSave?.({
+    document: saved,
+    waitUntil: (edits: Promise<readonly vscode.TextEdit[]>) => {
+      pendingEdits = Promise.resolve(edits);
+    },
+  } as vscode.TextDocumentWillSaveEvent);
+  const edits = await pendingEdits;
+  applyBeforeSave?.(edits);
+  didSave(saved);
+  return edits;
+}
+
 beforeEach(() => {
   subscriptions = [];
+  willSave = undefined;
   COMMANDS.clear();
   jest.mocked(vscode.commands.registerCommand).mockImplementation((id, callback) => {
     COMMANDS.set(id, callback);
@@ -60,7 +79,11 @@ beforeEach(() => {
           : undefined,
   } as vscode.WorkspaceConfiguration);
   jest.mocked(vscode.workspace.onDidSaveTextDocument).mockImplementation((listener) => {
-    save = listener;
+    didSave = listener;
+    return { dispose: jest.fn() };
+  });
+  jest.mocked(vscode.workspace.onWillSaveTextDocument).mockImplementation((listener) => {
+    willSave = listener;
     return { dispose: jest.fn() };
   });
   Object.defineProperty(vscode.window, 'activeTextEditor', {
@@ -80,18 +103,18 @@ afterEach(() => {
 });
 
 it('silently skips a saved Markdown document containing only a text block', async () => {
-  save(document('# Notes\n\n```text\nplain text\n```\n'));
-  await new Promise(setImmediate);
+  const edits = await save(document('# Notes\n\n```text\nplain text\n```\n'));
 
+  expect(edits).toEqual([]);
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
 });
 
 it('silently skips an unlabelled code block', async () => {
-  save(document('```\nplain text\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```\nplain text\n```'));
 
+  expect(edits).toEqual([]);
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
@@ -99,15 +122,62 @@ it('silently skips an unlabelled code block', async () => {
 
 it('formats the saved document even without an active text editor', async () => {
   const saved = document('# Notes\n\n```js\nconst answer=42\n```\n');
-  save(saved);
-  await new Promise(setImmediate);
+  const edits = await save(saved);
 
-  const edit = jest.mocked(vscode.WorkspaceEdit).mock.results[0].value;
-  expect(edit.set).toHaveBeenCalledWith(saved.uri, [
+  expect(edits).toEqual([
     expect.objectContaining({ newText: 'const answer = 42;' }),
   ]);
-  expect(vscode.workspace.applyEdit).toHaveBeenCalledWith(edit);
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+});
+
+it('formats a Markdown document saved from the normal text editor', async () => {
+  const saved = document('```js\nconst answer=42\n```');
+  Object.defineProperty(vscode.window, 'activeTextEditor', {
+    value: { document: saved },
+    configurable: true,
+  });
+
+  const edits = await save(saved);
+
+  expect(edits).toEqual([expect.objectContaining({ newText: 'const answer = 42;' })]);
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
+});
+
+it('leaves the saved Markdown persisted and clean after formatting a code block', async () => {
+  let content = '```js\nconst answer=42\n```\n';
+  let persisted = content;
+  const saved = {
+    ...document(content),
+    version: 1,
+    isDirty: false,
+    getText: () => content,
+    lineAt: (line: number) => ({ text: content.split('\n')[line] }),
+    save: jest.fn(async () => {
+      persisted = content;
+      saved.isDirty = false;
+      return true;
+    }),
+  } as unknown as vscode.TextDocument & { version: number; isDirty: boolean };
+  jest.mocked(vscode.workspace.applyEdit).mockImplementation(async (edit) => {
+    const replacements = jest.mocked(edit.set).mock.calls[0][1] as unknown as vscode.TextEdit[];
+    content = content.replace('const answer=42', replacements[0].newText);
+    saved.version++;
+    saved.isDirty = true;
+    return true;
+  });
+
+  await save(saved, ([replacement]) => {
+    if (replacement) {
+      content = content.replace('const answer=42', replacement.newText);
+      saved.version++;
+    }
+    persisted = content;
+  });
+  await new Promise(setImmediate);
+
+  expect(persisted).toBe('```js\nconst answer = 42;\n```\n');
+  expect(saved.isDirty).toBe(false);
 });
 
 it('edits the saved document rather than another active document', async () => {
@@ -116,19 +186,18 @@ it('edits the saved document rather than another active document', async () => {
     configurable: true,
   });
   const saved = document('```js\nconst answer=42\n```', 'saved.md');
-  save(saved);
-  await new Promise(setImmediate);
+  const edits = await save(saved);
 
-  const edit = jest.mocked(vscode.WorkspaceEdit).mock.results[0].value;
-  expect(edit.set).toHaveBeenCalledWith(saved.uri, [
+  expect(edits).toEqual([
     expect.objectContaining({ newText: 'const answer = 42;' }),
   ]);
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
 });
 
 it('does not write or notify when eligible code is already formatted', async () => {
-  save(document('```js\nconst answer = 42;\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```js\nconst answer = 42;\n```'));
 
+  expect(edits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
@@ -140,12 +209,29 @@ it('reports a formatter failure instead of silently treating it as no work', asy
     isAvailable: async () => true,
     format: async () => ({ success: false, error: 'Invalid JavaScript' }),
   });
-  save(document('```js\nconst =\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```js\nconst =\n```'));
 
+  expect(edits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
     expect.stringContaining('1 code block(s) could not be formatted'),
+  );
+});
+
+it('still saves the Markdown document if a formatter throws', async () => {
+  formatterRegistry.register({
+    supportedLanguages: ['javascript'],
+    isAvailable: async () => true,
+    format: async () => {
+      throw new Error('formatter crashed');
+    },
+  });
+
+  const edits = await save(document('```js\nconst answer=42\n```'));
+
+  expect(edits).toEqual([]);
+  expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+    expect.stringContaining('could not be formatted'),
   );
 });
 
@@ -158,9 +244,9 @@ it('reports a failed block when another block is already formatted', async () =>
         ? { success: false, error: 'Invalid JavaScript' }
         : { success: true, formatted: code },
   });
-  save(document('```js\nconst answer = 42;\n```\n\n```js\ninvalid\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```js\nconst answer = 42;\n```\n\n```js\ninvalid\n```'));
 
+  expect(edits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
     expect.stringContaining('1 code block(s) could not be formatted'),
@@ -177,25 +263,22 @@ it('reports a failed block even when another block was formatted', async () => {
         ? { success: false, error: 'Invalid JavaScript' }
         : { success: true, formatted: 'const answer = 42;' },
   });
-  save(document('```js\nconst answer=42\n```\n\n```js\ninvalid\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```js\nconst answer=42\n```\n\n```js\ninvalid\n```'));
 
-  expect(vscode.workspace.applyEdit).toHaveBeenCalled();
+  expect(edits).toEqual([expect.objectContaining({ newText: 'const answer = 42;' })]);
+  expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
     expect.stringContaining('1 code block(s) could not be formatted'),
   );
 });
 
 it('formats only eligible blocks in a mixed Markdown document', async () => {
-  save(
+  const edits = await save(
     document(
       '# Notes\n\n```text\nplain\n```\n\n```js\nconst answer=42\n```\n\n```js @md-assistant-ignore\nconst ignored=1\n```',
     ),
   );
-  await new Promise(setImmediate);
-
-  const edit = jest.mocked(vscode.WorkspaceEdit).mock.results[0].value;
-  expect(edit.set).toHaveBeenCalledWith(expect.anything(), [
+  expect(edits).toEqual([
     expect.objectContaining({
       newText: 'const answer = 42;',
       range: expect.objectContaining({ start: { line: 7, character: 0 } }),
@@ -213,9 +296,9 @@ it('skips a language disabled by settings', async () => {
           ? []
           : 'onCommand',
   } as unknown as vscode.WorkspaceConfiguration);
-  save(document('```js\nconst answer=42\n```'));
-  await new Promise(setImmediate);
+  const edits = await save(document('```js\nconst answer=42\n```'));
 
+  expect(edits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
 });
@@ -231,33 +314,25 @@ it('does not apply edits calculated for an older document version', async () => 
       }),
   });
   const saved = { ...document('```js\nconst answer=42\n```'), version: 1 };
-  save(saved);
+  const result = save(saved);
   await new Promise(setImmediate);
   saved.version = 2;
   finishFormat({ success: true, formatted: 'const answer = 42;' });
-  await new Promise(setImmediate);
+  const edits = await result;
 
+  expect(edits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
 });
 
-it('reports a failed write to the saved document', async () => {
-  jest.mocked(vscode.workspace.applyEdit).mockResolvedValue(false);
-  save(document('```js\nconst answer=42\n```'));
-  await new Promise(setImmediate);
-
-  expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-    'Markdown Code Assistant: Could not apply formatted code blocks.',
-  );
-});
-
 it('does not format non-Markdown documents or outside onSave mode', async () => {
-  save(document('```js\nconst answer=42\n```', 'saved.txt', 'plaintext'));
+  const plainEdits = await save(document('```js\nconst answer=42\n```', 'saved.txt', 'plaintext'));
   jest.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: () => 'onCommand',
   } as unknown as vscode.WorkspaceConfiguration);
-  save(document('```js\nconst answer=42\n```'));
-  await new Promise(setImmediate);
+  const commandEdits = await save(document('```js\nconst answer=42\n```'));
 
+  expect(plainEdits).toEqual([]);
+  expect(commandEdits).toEqual([]);
   expect(vscode.workspace.applyEdit).not.toHaveBeenCalled();
   expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
 });
@@ -267,8 +342,7 @@ it('keeps save diagnostics aimed at the saved document', async () => {
     get: (key: string) => (key === 'diagnostics.triggerMode' ? 'onSave' : 'onCommand'),
   } as vscode.WorkspaceConfiguration);
   const saved = document('# Notes');
-  save(saved);
-  await new Promise(setImmediate);
+  await save(saved);
 
   const provider = jest.mocked(DiagnosticProvider).mock.results.slice(-1)[0].value;
   expect(provider.refresh).toHaveBeenCalledWith(saved);
