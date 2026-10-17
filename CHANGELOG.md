@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
+- **MEO Enhanced save persistence** — apply `onSave` code-block formatting before the disk write so a formatted document does not immediately become unsaved again.
+
 - **Format on save with custom Markdown editors** — format the saved document rather than the active editor, and silently skip documents without eligible code blocks.
 
 - **esbuild packaging**: `eslint` removed from `devDependencies` (vsce silently excludes devDeps even when `.vscodeignore` negation rules are present); it is now in `dependencies` and bundled at build time.

@@ -127,7 +127,7 @@ All settings are under `mdCodeAssist.*` and can be set at User, Workspace, or Fo
 | `"onSave"`    | Runs every time you save the Markdown file.                                           |
 | `"onType"`    | Watch mode — runs continuously as you edit (debounced 500 ms).                        |
 
-With `onSave`, formatting uses the saved Markdown document, even when a custom editor has no active text editor. Documents with no enabled, supported code blocks (including prose and `text` fences) are skipped without a notification or edit. This requires the editor to expose a standard VS Code `TextDocument` save event; custom editors that do not expose one are not covered.
+With `onSave`, formatting edits join the Markdown document's save before it is written to disk, even when a custom editor has no active text editor. Documents with no enabled, supported code blocks (including prose and `text` fences) are skipped without a notification or edit. This requires the editor to expose a standard VS Code `TextDocument` save event; custom editors that do not expose one are not covered.
 
 > **Tip:** Prefix any fence with `@md-assistant-ignore` to permanently exclude a block from all processing: ` ```python @md-assistant-ignore `
 
