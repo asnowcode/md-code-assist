@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { extractCodeBlocks } from '../parser';
 import { dispatchFormat } from '../formatters/formatterDispatcher';
+import { formatterRegistry } from '../formatters/formatterRegistry';
+import { getSettings } from '../config/settings';
 import { Logger } from '../utils/logger';
 import type { StatusBarController } from '../ui/statusBarItem';
 
@@ -14,6 +16,8 @@ export interface FormatSummary {
   alreadyFormattedCount: number;
   /** Blocks skipped: language disabled, no formatter, or formatter unavailable. */
   skippedCount: number;
+  /** Eligible blocks whose formatter failed. */
+  failedCount: number;
 }
 
 /**
@@ -33,9 +37,17 @@ export async function formatDocument(
     formattedCount: 0,
     alreadyFormattedCount: 0,
     skippedCount: 0,
+    failedCount: 0,
   };
 
-  if (blocks.length === 0) {
+  const enabledLanguages = getSettings().format.enabledLanguages;
+  const eligibleBlocks = blocks.filter(
+    (block) =>
+      enabledLanguages.includes(block.language) && formatterRegistry.getFormatter(block.language),
+  );
+  summary.skippedCount = blocks.length - eligibleBlocks.length;
+
+  if (eligibleBlocks.length === 0) {
     return summary;
   }
 
@@ -47,11 +59,11 @@ export async function formatDocument(
     },
     async (progress) => {
       const results = await Promise.all(
-        blocks.map(async (block, i) => {
+        eligibleBlocks.map(async (block, i) => {
           if (token.isCancellationRequested) {
             return null;
           }
-          progress.report({ message: `Block ${i + 1}/${blocks.length}` });
+          progress.report({ message: `Block ${i + 1}/${eligibleBlocks.length}` });
           const result = await dispatchFormat(block);
           return { block, result };
         }),
@@ -63,6 +75,7 @@ export async function formatDocument(
         }
         if (!entry.result.success || entry.result.formatted === undefined) {
           summary.skippedCount++;
+          summary.failedCount++;
           continue;
         }
         if (entry.result.formatted === entry.block.content) {
@@ -91,18 +104,32 @@ export async function formatDocument(
 }
 
 /** VS Code command handler — applies edits directly via WorkspaceEdit. */
-export async function formatAllBlocksCommand(statusBar?: StatusBarController): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== 'markdown') {
-    void vscode.window.showWarningMessage(
-      'Markdown Code Assistant: Open a Markdown file to format.',
-    );
+export async function formatAllBlocksCommand(
+  statusBar?: StatusBarController,
+  savedDocument?: vscode.TextDocument,
+): Promise<void> {
+  const document = savedDocument ?? vscode.window.activeTextEditor?.document;
+  if (!document || document.languageId !== 'markdown') {
+    if (!savedDocument) {
+      void vscode.window.showWarningMessage(
+        'Markdown Code Assistant: Open a Markdown file to format.',
+      );
+    }
     return;
   }
 
   const tokenSource = new vscode.CancellationTokenSource();
-  const summary = await formatDocument(editor.document, tokenSource.token);
+  const version = document.version;
+  const summary = await formatDocument(document, tokenSource.token);
   tokenSource.dispose();
+
+  if (document.version !== version) {
+    return;
+  }
+
+  if (savedDocument && summary.edits.length === 0 && summary.failedCount === 0) {
+    return;
+  }
 
   if (summary.blockCount === 0) {
     void vscode.window.showInformationMessage(
@@ -118,7 +145,7 @@ export async function formatAllBlocksCommand(statusBar?: StatusBarController): P
       );
     } else if (summary.skippedCount > 0 && summary.alreadyFormattedCount === 0) {
       void vscode.window.showWarningMessage(
-        `Markdown Code Assistant: ${summary.skippedCount} block(s) skipped — language not enabled or formatter unavailable. Check the Output panel for details.`,
+        `Markdown Code Assistant: ${summary.skippedCount} block(s) skipped — language not enabled, formatter unavailable, or formatting failed. Check the Output panel for details.`,
       );
     } else {
       void vscode.window.showInformationMessage(
@@ -129,10 +156,24 @@ export async function formatAllBlocksCommand(statusBar?: StatusBarController): P
   }
 
   const workspaceEdit = new vscode.WorkspaceEdit();
-  workspaceEdit.set(editor.document.uri, summary.edits);
-  await vscode.workspace.applyEdit(workspaceEdit);
+  workspaceEdit.set(document.uri, summary.edits);
+  if (!(await vscode.workspace.applyEdit(workspaceEdit))) {
+    void vscode.window.showWarningMessage(
+      'Markdown Code Assistant: Could not apply formatted code blocks.',
+    );
+    return;
+  }
 
   statusBar?.setFormatDone(summary.formattedCount);
+
+  if (savedDocument) {
+    if (summary.failedCount > 0) {
+      void vscode.window.showWarningMessage(
+        `Markdown Code Assistant: ${summary.failedCount} code block(s) could not be formatted. Check the Output panel for details.`,
+      );
+    }
+    return;
+  }
 
   void vscode.window.showInformationMessage(
     `Markdown Code Assistant: Formatted ${summary.formattedCount} block(s).` +

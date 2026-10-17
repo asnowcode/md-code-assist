@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { registerCommands } from './commands/commandRegistry';
+import { formatAllBlocksCommand } from './commands/formatAllBlocks';
 import { DiagnosticProvider } from './diagnostics/diagnosticProvider';
 import { DecorationManager } from './decorations/decorationManager';
 import { Logger } from './utils/logger';
@@ -123,7 +124,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const config = vscode.workspace.getConfiguration('mdCodeAssist');
     if (config.get<string>('format.triggerMode') === 'onSave') {
-      void vscode.commands.executeCommand('mdCodeAssist.formatAllBlocks');
+      void formatAllBlocksCommand(statusBar, document);
     }
     if (config.get<string>('diagnostics.triggerMode') === 'onSave') {
       void diagnosticProvider?.refresh(document);

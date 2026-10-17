@@ -2,6 +2,8 @@
 
 ## Formatting pipeline
 
+The `onSave` listener passes its saved Markdown `TextDocument` to the formatting flow. Manual format commands use the active text editor. The shared document formatter skips disabled languages and fences without a registered formatter before showing progress; only changed code-block content is written through `WorkspaceEdit`. Custom editors are supported when they expose a standard text-document save event and accept those edits.
+
 ```
 Markdown file
     │

@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
+- **Format on save with custom Markdown editors** — format the saved document rather than the active editor, and silently skip documents without eligible code blocks.
+
 - **esbuild packaging**: `eslint` removed from `devDependencies` (vsce silently excludes devDeps even when `.vscodeignore` negation rules are present); it is now in `dependencies` and bundled at build time.
 - **Tab close behaviour** in `BlackExtensionFormatter` and `ShfmtExtensionFormatter`: replaced `closeActiveEditor` with targeted `tabGroups.close()` so the user's active editor is never disturbed by background formatting operations.
 
