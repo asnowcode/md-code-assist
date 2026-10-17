@@ -15,7 +15,10 @@ const vscode = {
       task({ report: jest.fn() }),
     ),
     activeTextEditor: undefined,
-    tabGroups: { all: [] as unknown[] },
+    tabGroups: {
+      all: [] as unknown[],
+      activeTabGroup: { activeTab: undefined as unknown },
+    },
   },
   workspace: {
     getConfiguration: jest.fn(() => ({

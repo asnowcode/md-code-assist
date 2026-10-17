@@ -127,7 +127,7 @@ All settings are under `mdCodeAssist.*` and can be set at User, Workspace, or Fo
 | `"onSave"`    | Runs every time you save the Markdown file.                                           |
 | `"onType"`    | Watch mode — runs continuously as you edit (debounced 500 ms).                        |
 
-With `onSave`, formatting edits join a Markdown text document's save before it is written to disk. Documents with no enabled, supported code blocks (including prose and `text` fences) are skipped without a notification or edit. MEO Enhanced 0.3.33 rejects a save if another extension changes its requested text, so Markdown Code Assistant skips automatic formatting while that document is open in MEO. Saving still works; open the file in the standard text editor to format code blocks.
+With `onSave`, formatting edits join a Markdown text document's save before it is written to disk. Documents with no enabled, supported code blocks (including prose and `text` fences) are skipped without a notification or edit. MEO Enhanced 0.3.33 rejects a save if another extension changes its requested text, so Markdown Code Assistant skips automatic formatting only when MEO is the active editor. Saving from the standard text editor still formats code blocks, even if the same file is also open in MEO.
 
 > **Tip:** Prefix any fence with `@md-assistant-ignore` to permanently exclude a block from all processing: ` ```python @md-assistant-ignore `
 

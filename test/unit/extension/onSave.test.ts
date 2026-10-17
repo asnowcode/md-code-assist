@@ -32,6 +32,7 @@ let subscriptions: vscode.Disposable[];
 const COMMANDS = new Map<string, (...args: unknown[]) => unknown>();
 const mockTabGroups = vscode.window.tabGroups as unknown as {
   all: Array<{ tabs: Array<{ input: unknown }> }>;
+  activeTabGroup: { activeTab: { input: unknown } | undefined };
 };
 
 function document(text: string, name = 'saved.md', languageId = 'markdown'): vscode.TextDocument {
@@ -65,6 +66,7 @@ beforeEach(() => {
   subscriptions = [];
   willSave = undefined;
   mockTabGroups.all.length = 0;
+  mockTabGroups.activeTabGroup.activeTab = undefined;
   COMMANDS.clear();
   jest.mocked(vscode.commands.registerCommand).mockImplementation((id, callback) => {
     COMMANDS.set(id, callback);
@@ -137,6 +139,14 @@ it('formats the saved document even without an active text editor', async () => 
 
 it('formats a Markdown document saved from the normal text editor', async () => {
   const saved = document('```js\nconst answer=42\n```');
+  const textInput = { uri: saved.uri };
+  mockTabGroups.activeTabGroup.activeTab = { input: textInput };
+  mockTabGroups.all.push({
+    tabs: [
+      { input: new vscode.TabInputCustom(saved.uri, 'meoEnhanced.editor') },
+      { input: textInput },
+    ],
+  });
   Object.defineProperty(vscode.window, 'activeTextEditor', {
     value: { document: saved },
     configurable: true,
@@ -156,6 +166,7 @@ it('lets MEO save the requested revision without a conflicting format edit', asy
   mockTabGroups.all.push({
     tabs: [{ input: new vscode.TabInputCustom(saved.uri, 'meoEnhanced.editor') }],
   });
+  mockTabGroups.activeTabGroup.activeTab = mockTabGroups.all[0].tabs[0];
 
   const edits = await save(saved, (changes) => {
     disk = changes.length === 0 ? requested : changes[0].newText;
